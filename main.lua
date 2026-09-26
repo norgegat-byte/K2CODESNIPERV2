@@ -1,9 +1,9 @@
 --[[
-  K2 CODE SNIPER V2 — tight capture + no lag type
-  - ONLY writes after: code / riddle / code is / riddle is / the code is / the riddle is
-  - Riddle & code paths never mix
-  - Sammy filter toggle in Settings
-  - Small GUI (290x385)
+  K2 CODE SNIPER V2 — notifier + capture
+  - "code" / "code is" / "use code" / "riddle is" = NOTIFIER only (never types that line)
+  - Actual code/riddle is taken from the NEXT message after arm
+  - Reset Input clears queue + collected + arm
+  - Sammy filter in Settings
 ]]
 
 repeat task.wait() until game:IsLoaded()
@@ -28,6 +28,7 @@ _G.AutoBuyEnabled = false
 
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
+local GuiService = game:GetService("GuiService")
 local TS = game:GetService("TweenService")
 local RS = game:GetService("ReplicatedStorage")
 local LP = Players.LocalPlayer
@@ -466,7 +467,77 @@ local function updateCounters()
 	if CollectedLabel then CollectedLabel.Text = tostring(#collectedCodes) .. " / " .. tostring(t) end
 end
 
--- Instant type — one Text set, no spam loops
+-- Mobile-safe type: never hold TextBox focus (focus steals touch → camera zoom on swipe)
+local _isMobile = UIS.TouchEnabled
+
+local function restoreCamera(cf, fov)
+	pcall(function()
+		local cam = workspace.CurrentCamera
+		if not cam then return end
+		if cf then cam.CFrame = cf end
+		if fov then cam.FieldOfView = fov end
+	end)
+end
+
+local function safeTypeIntoBox(textBox, fullText)
+	if not textBox then return end
+	local cam = workspace.CurrentCamera
+	local savedCF, savedFOV
+	pcall(function()
+		if cam then
+			savedCF = cam.CFrame
+			savedFOV = cam.FieldOfView
+		end
+	end)
+
+	pcall(function()
+		textBox.ClearTextOnFocus = false
+		textBox.TextEditable = true
+	end)
+
+	-- Prefer setting Text WITHOUT CaptureFocus (especially mobile)
+	pcall(function()
+		textBox.Text = fullText
+	end)
+
+	-- PC only: brief focus so games that require it still register, then release
+	if not _isMobile then
+		pcall(function()
+			textBox:CaptureFocus()
+			textBox.CursorPosition = #fullText + 1
+		end)
+		task.wait()
+		pcall(function()
+			textBox:ReleaseFocus(false)
+		end)
+	else
+		-- Mobile: never CaptureFocus — it causes pinch/zoom camera glitches while swiping
+		pcall(function()
+			if textBox:IsFocused() then
+				textBox:ReleaseFocus(false)
+			end
+		end)
+	end
+
+	-- Clear GUI selection so touch goes back to camera/world
+	pcall(function()
+		GuiService.SelectedObject = nil
+	end)
+
+	restoreCamera(savedCF, savedFOV)
+	-- one more frame restore (games sometimes nudge FOV on focus change)
+	task.defer(function()
+		restoreCamera(savedCF, savedFOV)
+		pcall(function()
+			if textBox and textBox:IsFocused() and _isMobile then
+				textBox:ReleaseFocus(false)
+			end
+			GuiService.SelectedObject = nil
+		end)
+	end)
+end
+
+-- Instant type — one Text set, no held focus
 local function writeAndSubmit(code)
 	code = formatCode(code)
 	if code == "" then return false end
@@ -485,11 +556,6 @@ local function writeAndSubmit(code)
 		return false
 	end
 
-	pcall(function()
-		textBox.ClearTextOnFocus = false
-		textBox.TextEditable = true
-	end)
-
 	if not collectedSeen[code] then
 		collectedSeen[code] = true
 		table.insert(collectedCodes, code)
@@ -499,27 +565,31 @@ local function writeAndSubmit(code)
 	local fullText = table.concat(collectedCodes, "")
 	local ready = #collectedCodes >= target
 
-	-- single instant type
-	pcall(function()
-		textBox:CaptureFocus()
-		textBox.Text = fullText
-		textBox.CursorPosition = #fullText + 1
-	end)
+	safeTypeIntoBox(textBox, fullText)
 	updateCounters()
 	pushActivity("Typed " .. code, Theme.Cyan)
 
 	if ready and _G.AutoSubmitEnabled then
 		setStatus("● SUBMIT", fullText, "wait")
 		local attempts = math.clamp(tonumber(_G.SubmitAttempts) or 3, 1, 6)
+		local cam = workspace.CurrentCamera
+		local savedCF, savedFOV
+		pcall(function()
+			if cam then savedCF, savedFOV = cam.CFrame, cam.FieldOfView end
+		end)
 		for _ = 1, attempts do
-			pcall(function()
-				textBox.Text = fullText
-				textBox:CaptureFocus()
-			end)
+			pcall(function() textBox.Text = fullText end)
+			-- submit without holding focus
 			fireSubmitButton(textBox)
 			task.wait(0.05)
+			restoreCamera(savedCF, savedFOV)
+			pcall(function()
+				if textBox:IsFocused() then textBox:ReleaseFocus(false) end
+				GuiService.SelectedObject = nil
+			end)
 		end
 		redeemViaRF(fullText)
+		restoreCamera(savedCF, savedFOV)
 		setStatus("✓ SUCCESS", "Submitted", "ok")
 		pushActivity("Submitted", Theme.Green)
 		table.clear(collectedCodes)
@@ -617,6 +687,18 @@ local function clearArm()
 	table.clear(bufferedParts)
 end
 
+local function resetInput()
+	table.clear(pendingQueue)
+	table.clear(pendingSeen)
+	table.clear(collectedCodes)
+	table.clear(collectedSeen)
+	clearArm()
+	writeBusy = false
+	updateCounters()
+	setStatus("● RESET", "Queue + collected cleared", "wait")
+	pushActivity("Input reset", Theme.Amber)
+end
+
 -- Process ONLY after arm; never solve riddles on code path and vice versa
 local function processArmedPayload(raw)
 	if not isArmed() then return false end
@@ -637,14 +719,15 @@ local function processArmedPayload(raw)
 			else
 				local box = findCodeTextBox()
 				if box then
-					pcall(function()
-						box:CaptureFocus()
-						box.Text = ans
-					end)
+					safeTypeIntoBox(box, ans)
 					if _G.AutoSubmitEnabled then
 						task.wait(0.03)
 						fireSubmitButton(box)
 						redeemViaRF(ans)
+						pcall(function()
+							if box:IsFocused() then box:ReleaseFocus(false) end
+							GuiService.SelectedObject = nil
+						end)
 					end
 				end
 			end
@@ -694,62 +777,36 @@ local function processText(text)
 	if not text or text == "" then return end
 	text = stripRich(text)
 
-	-- 1) Trigger lines arm the correct mode (and may include inline value)
+	-- 1) Trigger lines are NOTIFIERS only — never write / queue from the trigger itself
+	--    ("code" / "code is" / "use code" / "riddle is" …) just means something is coming next
 	local trig = detectTrigger(text)
 	if trig then
-		-- only arm modes the user enabled
-		if trig == "riddle" and not _G.RiddleSolverEnabled and not _G.AutoWriteEnabled then
-			-- still arm if either is on for write of answer
-		end
 		if trig == "riddle" then
+			pushActivity("Riddle incoming", Theme.Violet)
+			setStatus("● NOTICE", "Riddle incoming…", "arm")
+			-- arm only so the NEXT message can be solved / queued
 			if _G.RiddleSolverEnabled or _G.AutoWriteEnabled then
 				armCapture("riddle")
 			end
 		elseif trig == "code" then
+			pushActivity("Code incoming", Theme.Amber)
+			setStatus("● NOTICE", "Code incoming…", "arm")
+			-- arm only so the NEXT message can be captured
 			if _G.AutoWriteEnabled then
 				armCapture("code")
 			end
 		end
-		-- inline on same line: "code is XYZ" / "riddle is my age"
-		if captureMode == "code" then
-			local codes = extractCodesFromText(text)
-			-- only take tokens that aren't the trigger words themselves
-			for _, c in ipairs(codes) do
-				local low = c:lower()
-				if low ~= "CODE" and low ~= "RIDDLE" and #c >= 3 then
-					clearArm()
-					queueCode(c, "Inline")
-					return
-				end
-			end
-		elseif captureMode == "riddle" then
-			-- try solve the rest of the line after trigger
-			local rest = text
-				:gsub("[Tt]he%s+[Rr]iddle%s+[Ii]s%s*", "")
-				:gsub("[Rr]iddle%s+[Ii]s%s*", "")
-				:gsub("[Tt]he%s+[Aa]nswer%s+[Ii]s%s*", "")
-				:gsub("[Aa]nswer%s+[Ii]s%s*", "")
-			if rest ~= text and #rest > 2 then
-				local ans = solveRiddle(rest)
-				if ans then
-					clearArm()
-					setStatus("✓ RIDDLE", ans, "ok")
-					pushActivity("Riddle → " .. ans, Theme.Violet)
-					if _G.AutoWriteEnabled then queueCode(ans, "Riddle") end
-					return
-				end
-			end
-		end
+		-- DO NOT extract / queue / type anything from the trigger line
 		return
 	end
 
-	-- 2) Only process payload if armed
+	-- 2) Only process payload if armed (actual code / riddle text after the notifier)
 	if isArmed() then
 		processArmedPayload(text)
 		return
 	end
 
-	-- 3) Nothing armed → ignore (no random riddle / no random codes)
+	-- 3) Nothing armed → ignore
 end
 
 ------------------------------------------------------------
@@ -1217,7 +1274,7 @@ PageMain.BackgroundTransparency = 1
 PageMain.BorderSizePixel = 0
 PageMain.ScrollBarThickness = 2
 PageMain.ScrollBarImageColor3 = Theme.Cyan
-PageMain.CanvasSize = UDim2.new(0, 0, 0, 250)
+PageMain.CanvasSize = UDim2.new(0, 0, 0, 280)
 PageMain.ZIndex = 11
 PageMain.Parent = Content
 
@@ -1402,7 +1459,7 @@ actTitle.ZIndex = 12
 actTitle.Parent = PageMain
 
 activityHost = Instance.new("Frame")
-activityHost.Size = UDim2.new(1, -16, 0, 48)
+activityHost.Size = UDim2.new(1, -16, 0, 40)
 activityHost.Position = UDim2.new(0, 8, 0, 196)
 activityHost.BackgroundTransparency = 1
 activityHost.ZIndex = 12
@@ -1411,6 +1468,40 @@ local al = Instance.new("UIListLayout")
 al.SortOrder = Enum.SortOrder.LayoutOrder
 al.Padding = UDim.new(0, 1)
 al.Parent = activityHost
+
+-- Reset Input button (clears queue + collected + arm)
+local resetBtn = Instance.new("TextButton")
+resetBtn.Size = UDim2.new(1, -16, 0, 28)
+resetBtn.Position = UDim2.new(0, 8, 0, 240)
+resetBtn.BackgroundColor3 = Theme.Card
+resetBtn.BackgroundTransparency = 0.12
+resetBtn.BorderSizePixel = 0
+resetBtn.AutoButtonColor = false
+resetBtn.Font = FT
+resetBtn.TextSize = 11
+resetBtn.TextColor3 = Theme.Moonlight
+resetBtn.Text = "↺  RESET INPUT"
+resetBtn.ZIndex = 12
+resetBtn.Parent = PageMain
+corner(resetBtn, 8)
+local rstStroke = stroke(resetBtn, Theme.Amber, 1, 0.55)
+resetBtn.MouseEnter:Connect(function()
+	TS:Create(resetBtn, TIQ, { BackgroundTransparency = 0.02 }):Play()
+	TS:Create(rstStroke, TIQ, { Transparency = 0.25, Color = Theme.Amber }):Play()
+end)
+resetBtn.MouseLeave:Connect(function()
+	TS:Create(resetBtn, TIQ, { BackgroundTransparency = 0.12 }):Play()
+	TS:Create(rstStroke, TIQ, { Transparency = 0.55 }):Play()
+end)
+resetBtn.MouseButton1Click:Connect(function()
+	resetInput()
+	resetBtn.Text = "✓  CLEARED"
+	task.delay(0.9, function()
+		if resetBtn and resetBtn.Parent then
+			resetBtn.Text = "↺  RESET INPUT"
+		end
+	end)
+end)
 
 -- Settings
 local function sectionLabel(parent, y, text)
