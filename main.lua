@@ -1272,9 +1272,11 @@ local PageMain = Instance.new("ScrollingFrame")
 PageMain.Size = UDim2.fromScale(1, 1)
 PageMain.BackgroundTransparency = 1
 PageMain.BorderSizePixel = 0
-PageMain.ScrollBarThickness = 2
+PageMain.ScrollBarThickness = 3
 PageMain.ScrollBarImageColor3 = Theme.Cyan
-PageMain.CanvasSize = UDim2.new(0, 0, 0, 280)
+PageMain.ScrollingEnabled = true
+PageMain.Active = true
+PageMain.CanvasSize = UDim2.new(0, 0, 0, 270)
 PageMain.ZIndex = 11
 PageMain.Parent = Content
 
@@ -1446,52 +1448,30 @@ makeCardToggle(PageMain, 140, "🧠", "RIDDLE", "Solve after riddle trigger", fa
 	pushActivity(s and "Riddle ON" or "Riddle OFF", Theme.Violet)
 end)
 
-local actTitle = Instance.new("TextLabel")
-actTitle.BackgroundTransparency = 1
-actTitle.Position = UDim2.new(0, 8, 0, 184)
-actTitle.Size = UDim2.new(1, -20, 0, 10)
-actTitle.Font = FT
-actTitle.Text = "ACTIVITY"
-actTitle.TextSize = 8
-actTitle.TextColor3 = Theme.Muted
-actTitle.TextXAlignment = Enum.TextXAlignment.Left
-actTitle.ZIndex = 12
-actTitle.Parent = PageMain
-
-activityHost = Instance.new("Frame")
-activityHost.Size = UDim2.new(1, -16, 0, 40)
-activityHost.Position = UDim2.new(0, 8, 0, 196)
-activityHost.BackgroundTransparency = 1
-activityHost.ZIndex = 12
-activityHost.Parent = PageMain
-local al = Instance.new("UIListLayout")
-al.SortOrder = Enum.SortOrder.LayoutOrder
-al.Padding = UDim.new(0, 1)
-al.Parent = activityHost
-
--- Reset Input button (clears queue + collected + arm)
+-- Reset Input — directly under toggles (always visible, no scroll needed)
 local resetBtn = Instance.new("TextButton")
-resetBtn.Size = UDim2.new(1, -16, 0, 28)
-resetBtn.Position = UDim2.new(0, 8, 0, 240)
-resetBtn.BackgroundColor3 = Theme.Card
-resetBtn.BackgroundTransparency = 0.12
+resetBtn.Name = "ResetInput"
+resetBtn.Size = UDim2.new(1, -16, 0, 30)
+resetBtn.Position = UDim2.new(0, 8, 0, 180)
+resetBtn.BackgroundColor3 = Color3.fromRGB(40, 32, 18)
+resetBtn.BackgroundTransparency = 0.05
 resetBtn.BorderSizePixel = 0
 resetBtn.AutoButtonColor = false
 resetBtn.Font = FT
-resetBtn.TextSize = 11
-resetBtn.TextColor3 = Theme.Moonlight
+resetBtn.TextSize = 12
+resetBtn.TextColor3 = Theme.Amber
 resetBtn.Text = "↺  RESET INPUT"
-resetBtn.ZIndex = 12
+resetBtn.ZIndex = 14
 resetBtn.Parent = PageMain
 corner(resetBtn, 8)
-local rstStroke = stroke(resetBtn, Theme.Amber, 1, 0.55)
+local rstStroke = stroke(resetBtn, Theme.Amber, 1.5, 0.3)
 resetBtn.MouseEnter:Connect(function()
-	TS:Create(resetBtn, TIQ, { BackgroundTransparency = 0.02 }):Play()
-	TS:Create(rstStroke, TIQ, { Transparency = 0.25, Color = Theme.Amber }):Play()
+	TS:Create(resetBtn, TIQ, { BackgroundTransparency = 0, TextColor3 = Theme.Text }):Play()
+	TS:Create(rstStroke, TIQ, { Transparency = 0.1 }):Play()
 end)
 resetBtn.MouseLeave:Connect(function()
-	TS:Create(resetBtn, TIQ, { BackgroundTransparency = 0.12 }):Play()
-	TS:Create(rstStroke, TIQ, { Transparency = 0.55 }):Play()
+	TS:Create(resetBtn, TIQ, { BackgroundTransparency = 0.05, TextColor3 = Theme.Amber }):Play()
+	TS:Create(rstStroke, TIQ, { Transparency = 0.3 }):Play()
 end)
 resetBtn.MouseButton1Click:Connect(function()
 	resetInput()
@@ -1502,6 +1482,29 @@ resetBtn.MouseButton1Click:Connect(function()
 		end
 	end)
 end)
+
+local actTitle = Instance.new("TextLabel")
+actTitle.BackgroundTransparency = 1
+actTitle.Position = UDim2.new(0, 8, 0, 216)
+actTitle.Size = UDim2.new(1, -20, 0, 10)
+actTitle.Font = FT
+actTitle.Text = "ACTIVITY"
+actTitle.TextSize = 8
+actTitle.TextColor3 = Theme.Muted
+actTitle.TextXAlignment = Enum.TextXAlignment.Left
+actTitle.ZIndex = 12
+actTitle.Parent = PageMain
+
+activityHost = Instance.new("Frame")
+activityHost.Size = UDim2.new(1, -16, 0, 36)
+activityHost.Position = UDim2.new(0, 8, 0, 228)
+activityHost.BackgroundTransparency = 1
+activityHost.ZIndex = 12
+activityHost.Parent = PageMain
+local al = Instance.new("UIListLayout")
+al.SortOrder = Enum.SortOrder.LayoutOrder
+al.Padding = UDim.new(0, 1)
+al.Parent = activityHost
 
 -- Settings
 local function sectionLabel(parent, y, text)
